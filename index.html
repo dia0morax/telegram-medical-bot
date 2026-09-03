@@ -306,7 +306,6 @@
             <span id="file-name">ملف جديد.txt</span>
         </div>
         <div class="btn-group">
-            <!-- زري التراجع والإعادة الثابتين دائماً -->
             <button class="btn btn-icon-only" onclick="editorUndo()" title="تراجع">
                 <svg viewBox="0 0 24 24"><path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg>
             </button>
@@ -461,7 +460,6 @@
             const barWidth = quickActionBar.offsetWidth || 280;
             const halfBar = barWidth / 2;
             
-            // ضمان عدم خروج الشريط خارج الشاشة أفقياً
             let safeX = midX;
             if (safeX - halfBar < 10) {
                 safeX = halfBar + 10;
@@ -469,7 +467,6 @@
                 safeX = window.innerWidth - halfBar - 10;
             }
 
-            // إظهار الشريط أسفل التحديد إذا كان قريباً جداً من الحافة العلوية
             let safeY = topY;
             if (safeY < 65) {
                 safeY = Math.max(startCoords.bottom, endCoords.bottom) + 38;
@@ -493,7 +490,7 @@
             }
         });
 
-        // تحديد كامل النص بنجاح وسلاسة
+        // تحديد كامل النص
         function quickSelectAll() {
             editor.focus();
             const totalLines = editor.lineCount();
@@ -636,66 +633,16 @@
             markInstances.forEach(m => m.clear());
             markInstances = [];
 
-            const queryNorm = normalizeCode(queryRaw);
-            if (queryNorm.length === 0) {
-                alert('النص المدخل يحتوي فقط على شروحات ولا يوجد به كود برمجي للمطابقة!');
-                return;
-            }
-
-            const queryLines = queryRaw.trim().split('\n').length;
             const doc = editor.getDoc();
             const totalLines = doc.lineCount();
+            const queryLinesArr = queryRaw.split('\n');
 
-            let bestMatch = {
-                startLine: 0,
-                endLine: 0,
-                score: -1
-            };
-
-            const windowMargin = Math.max(2, Math.floor(queryLines * 0.5));
-            const minWindow = Math.max(1, queryLines - windowMargin);
-            const maxWindow = queryLines + windowMargin;
-
-            for (let start = 0; start < totalLines; start++) {
-                for (let w = minWindow; w <= maxWindow && (start + w) <= totalLines; w++) {
-                    const end = start + w;
-                    
-                    let blockLines = [];
-                    for (let i = start; i < end; i++) {
-                        blockLines.push(doc.getLine(i));
-                    }
-                    const blockText = blockLines.join('\n');
-                    const blockNorm = normalizeCode(blockText);
-
-                    if (blockNorm.length === 0) continue;
-
-                    if (blockNorm === queryNorm) {
-                        bestMatch = { startLine: start, endLine: end - 1, score: 1.0 };
-                        break;
-                    }
-
-                    const sim = calculateSimilarity(queryNorm, blockNorm);
-                    if (sim > bestMatch.score) {
-                        bestMatch = {
-                            startLine: start,
-                            endLine: end - 1,
-                            score: sim
-                        };
-                    }
-                }
-                if (bestMatch.score === 1.0) break;
-            }
-
-            if (bestMatch.score > 0.25) {
-                const scorePercent = Math.round(bestMatch.score * 100);
-                document.getElementById('match-status').innerText = `تم الانتقال للسطور (${bestMatch.startLine + 1} - ${bestMatch.endLine + 1})`;
+            function highlightAndJump(startLine, endLine, scorePercent) {
+                document.getElementById('match-status').innerText = `تم الانتقال للسطور (${startLine + 1} - ${endLine + 1})`;
                 document.getElementById('match-score').innerText = `تطابق: ${scorePercent}%`;
-
-                // تفريغ مربع البحث تلقائياً لسرعة البحث التالي
                 searchInput.value = '';
 
-                // تمييز وتحديد الكود
-                for (let i = bestMatch.startLine; i <= bestMatch.endLine; i++) {
+                for (let i = startLine; i <= endLine; i++) {
                     const lineLength = doc.getLine(i).length;
                     const mark = doc.markText(
                         { line: i, ch: 0 },
@@ -705,15 +652,103 @@
                     markInstances.push(mark);
                 }
 
-                // التمرير والتحديد
-                editor.scrollIntoView({ line: bestMatch.startLine, ch: 0 }, 200);
+                editor.scrollIntoView({ line: startLine, ch: 0 }, 200);
                 editor.setSelection(
-                    { line: bestMatch.startLine, ch: 0 },
-                    { line: bestMatch.endLine, ch: doc.getLine(bestMatch.endLine).length }
+                    { line: startLine, ch: 0 },
+                    { line: endLine, ch: doc.getLine(endLine).length }
                 );
-                
                 setTimeout(updateQuickActionBar, 50);
                 editor.focus();
+            }
+
+            // 1. مسار فائق السرعة للمطابقة التامة المباشرة
+            const fullDocText = editor.getValue();
+            const exactIdx = fullDocText.indexOf(queryRaw.trim());
+            if (exactIdx !== -1) {
+                const startPos = doc.posFromIndex(exactIdx);
+                const endPos = doc.posFromIndex(exactIdx + queryRaw.trim().length);
+                highlightAndJump(startPos.line, endPos.line, 100);
+                return;
+            }
+
+            const queryNorm = normalizeCode(queryRaw);
+            if (queryNorm.length === 0) {
+                alert('النص المدخل يحتوي فقط على شروحات ولا يوجد به كود برمجي للمطابقة!');
+                return;
+            }
+
+            // 2. معالجة مسبقة لأسطر المستند لمرة واحدة فقط
+            const docLinesNorm = new Array(totalLines);
+            for (let i = 0; i < totalLines; i++) {
+                docLinesNorm[i] = normalizeCode(doc.getLine(i));
+            }
+
+            // 3. نقاط ارتكاز لتحديد نقاط البداية بدقة
+            const validAnchors = queryLinesArr
+                .map((line, idx) => ({ text: normalizeCode(line), origIdx: idx }))
+                .filter(item => item.text.length >= 4);
+
+            const candidateStarts = new Set();
+
+            if (validAnchors.length > 0) {
+                const firstA = validAnchors[0];
+                const lastA = validAnchors[validAnchors.length - 1];
+
+                for (let i = 0; i < totalLines; i++) {
+                    if (docLinesNorm[i] && (docLinesNorm[i].includes(firstA.text) || firstA.text.includes(docLinesNorm[i]))) {
+                        candidateStarts.add(Math.max(0, i - firstA.origIdx));
+                    }
+                    if (docLinesNorm[i] && (docLinesNorm[i].includes(lastA.text) || lastA.text.includes(docLinesNorm[i]))) {
+                        candidateStarts.add(Math.max(0, i - lastA.origIdx));
+                    }
+                }
+            }
+
+            if (candidateStarts.size === 0) {
+                const step = Math.max(1, Math.floor(queryLinesArr.length / 2));
+                for (let i = 0; i < totalLines; i += step) {
+                    candidateStarts.add(i);
+                }
+            }
+
+            let bestMatch = { startLine: 0, endLine: 0, score: -1 };
+            const qCount = queryLinesArr.length;
+            const delta = Math.min(3, Math.max(1, Math.floor(qCount * 0.1)));
+            const minW = Math.max(1, qCount - delta);
+            const maxW = qCount + delta;
+
+            // 4. اختبار النقاط المرشحة فقط
+            for (let start of candidateStarts) {
+                if (start >= totalLines) continue;
+
+                for (let w = minW; w <= maxW && (start + w) <= totalLines; w++) {
+                    const end = start + w;
+
+                    let blockNorm = '';
+                    for (let i = start; i < end; i++) {
+                        blockNorm += docLinesNorm[i];
+                    }
+
+                    if (!blockNorm) continue;
+
+                    if (blockNorm === queryNorm) {
+                        bestMatch = { startLine: start, endLine: end - 1, score: 1.0 };
+                        break;
+                    }
+
+                    const lenRatio = blockNorm.length / queryNorm.length;
+                    if (lenRatio < 0.6 || lenRatio > 1.4) continue;
+
+                    const sim = calculateSimilarity(queryNorm, blockNorm);
+                    if (sim > bestMatch.score) {
+                        bestMatch = { startLine: start, endLine: end - 1, score: sim };
+                    }
+                }
+                if (bestMatch.score >= 0.95) break;
+            }
+
+            if (bestMatch.score > 0.25) {
+                highlightAndJump(bestMatch.startLine, bestMatch.endLine, Math.round(bestMatch.score * 100));
             } else {
                 document.getElementById('match-status').innerText = 'لم يتم العثور على كود مطابق بدرجة مقبولة';
                 document.getElementById('match-score').innerText = '';

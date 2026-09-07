@@ -152,10 +152,23 @@
             background-color: #2e7d32;
         }
 
+        .btn-format {
+            color: #aaa;
+            transition: all 0.2s ease;
+        }
+
+        .btn-format.active {
+            background-color: #0284c7;
+            border-color: #0369a1;
+            color: #fff;
+            box-shadow: 0 0 6px rgba(2, 132, 199, 0.5);
+        }
+
         .btn-primary {
             background-color: var(--primary);
             border-color: var(--primary-dark);
         }
+
 
 
         .search-panel {
@@ -361,8 +374,14 @@
             <button class="btn btn-icon-only btn-run" onclick="runPreview()" title="تجربة وتشغيل الكود في صفحة جديدة">
                 <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
             </button>
+
+            <!-- زر التنسيق وإعادة ترتيب الأسطر التلقائي الذكي -->
+            <button id="btn-auto-format" class="btn btn-icon-only btn-format" onclick="toggleSmartFormatting()" title="التنسيق الذكي وترتيب الأسطر تلقائياً (تشغيل/إطفاء)">
+                <svg viewBox="0 0 24 24"><path d="M3 21v-2h18v2H3zm0-4v-2h12v2H3zm0-4v-2h18v2H3zm0-4V7h12v2H3zm0-4V3h18v2H3z"/></svg>
+            </button>
             
             <button class="btn" onclick="document.getElementById('file-input').click()">
+
 
                 📂 فتح
             </button>
@@ -458,11 +477,37 @@
             inputStyle: 'contenteditable'
         });
 
-        // منع قائمة المتصفح الافتراضية لمنع تداخلها مع قائمتك
+        // إظهار الشريط عند الضغط المطول أو النقر بالزر الأيمن في أي مكان (حتى لو فارغ)
         container.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             e.stopPropagation();
+
+            // تحريك المؤشر لمكان الضغطة إذا لم يكن هناك تحديد
+            if (!editor.somethingSelected()) {
+                const clickPos = editor.coordsChar({ left: e.clientX, top: e.clientY }, "page");
+                editor.setCursor(clickPos);
+            }
+
+            showActionBarAt(e.clientX, e.clientY);
         }, true);
+
+        // دعم الضغط المطول على شاشات اللمس (Long Press)
+        let touchTimer = null;
+        container.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) return;
+            const touch = e.touches[0];
+            touchTimer = setTimeout(() => {
+                if (!editor.somethingSelected()) {
+                    const touchPos = editor.coordsChar({ left: touch.clientX, top: touch.clientY }, "page");
+                    editor.setCursor(touchPos);
+                }
+                showActionBarAt(touch.clientX, touch.clientY);
+            }, 500);
+        }, { passive: true });
+
+        container.addEventListener('touchend', () => clearTimeout(touchTimer));
+        container.addEventListener('touchmove', () => clearTimeout(touchTimer));
+
 
         // استعادة المحتوى المحفوظ
         const savedCode = localStorage.getItem('smart_editor_code');
@@ -497,8 +542,68 @@
             window.open(previewUrl, '_blank');
         }
 
-        // تموضع شريط الأوامر واحتوائه بالكامل داخل حدود الشاشة
+        // حالة زر التنسيق التلقائي
+        let isAutoFormatEnabled = false;
 
+        function toggleSmartFormatting() {
+            isAutoFormatEnabled = !isAutoFormatEnabled;
+            const btn = document.getElementById('btn-auto-format');
+            
+            if (isAutoFormatEnabled) {
+                btn.classList.add('active');
+                formatCodeSafely();
+                document.getElementById('match-status').innerText = '✨ تم تفعيل التنسيق التلقائي الذكي وترتيب الأسطر';
+            } else {
+                btn.classList.remove('active');
+                document.getElementById('match-status').innerText = 'تم إيقاف التنسيق التلقائي';
+            }
+        }
+
+        // محاذاة الأسطر والمسافات البادئة مع قواعد اللغة البرمجية بدون تخريب الكود
+        function formatCodeSafely() {
+            editor.operation(() => {
+                const totalLines = editor.lineCount();
+                
+                // 1. إعادة ضبط المسافات البادئة لكل سطر تِبعاً لنوعه (HTML/CSS/JS)
+                for (let i = 0; i < totalLines; i++) {
+                    editor.indentLine(i, "smart");
+                }
+
+                // 2. تنظيف المسافات الفارغة الزائدة دون المساس بتركيبة الكود
+                for (let i = 0; i < editor.lineCount(); i++) {
+                    const line = editor.getLine(i);
+                    const trimmedRight = line.replace(/[ \t]+$/, '');
+                    if (line !== trimmedRight) {
+                        editor.replaceRange(trimmedRight, { line: i, ch: 0 }, { line: i, ch: line.length });
+                    }
+                }
+            });
+        }
+
+        // تموضع شريط الأوامر عند الإحداثيات المحددة
+        function showActionBarAt(x, y) {
+            quickActionBar.style.display = 'flex';
+            
+            const barWidth = quickActionBar.offsetWidth || 280;
+            const halfBar = barWidth / 2;
+            
+            let safeX = x;
+            if (safeX - halfBar < 10) {
+                safeX = halfBar + 10;
+            } else if (safeX + halfBar > window.innerWidth - 10) {
+                safeX = window.innerWidth - halfBar - 10;
+            }
+
+            let safeY = y - 15;
+            if (safeY < 65) {
+                safeY = y + 45;
+            }
+
+            quickActionBar.style.left = safeX + 'px';
+            quickActionBar.style.top = safeY + 'px';
+        }
+
+        // تموضع شريط الأوامر عند تحديد النص
         function updateQuickActionBar() {
             if (!editor.somethingSelected()) {
                 quickActionBar.style.display = 'none';
@@ -512,28 +617,11 @@
             const endCoords = editor.cursorCoords(to, "page");
             
             const midX = (startCoords.left + endCoords.right) / 2;
-            const topY = Math.min(startCoords.top, endCoords.top) - 12;
+            const topY = Math.min(startCoords.top, endCoords.top);
 
-            quickActionBar.style.display = 'flex';
-            
-            const barWidth = quickActionBar.offsetWidth || 280;
-            const halfBar = barWidth / 2;
-            
-            let safeX = midX;
-            if (safeX - halfBar < 10) {
-                safeX = halfBar + 10;
-            } else if (safeX + halfBar > window.innerWidth - 10) {
-                safeX = window.innerWidth - halfBar - 10;
-            }
-
-            let safeY = topY;
-            if (safeY < 65) {
-                safeY = Math.max(startCoords.bottom, endCoords.bottom) + 38;
-            }
-
-            quickActionBar.style.left = safeX + 'px';
-            quickActionBar.style.top = safeY + 'px';
+            showActionBarAt(midX, topY);
         }
+
 
         editor.on('cursorActivity', () => {
             const pos = editor.getCursor();
@@ -548,6 +636,16 @@
                 quickActionBar.style.display = 'none';
             }
         });
+
+        // إخفاء الشريط عند النقر العادي إذا لم يكن هناك تحديد
+        editor.on('mousedown', () => {
+            setTimeout(() => {
+                if (!editor.somethingSelected()) {
+                    quickActionBar.style.display = 'none';
+                }
+            }, 10);
+        });
+
 
         // تحديد كامل النص
         function quickSelectAll() {
@@ -566,10 +664,14 @@
                     return;
                 }
                 editor.replaceSelection(text);
+                if (isAutoFormatEnabled) {
+                    formatCodeSafely();
+                }
                 quickActionBar.style.display = 'none';
                 markInstances.forEach(m => m.clear());
                 markInstances = [];
                 document.getElementById('match-status').innerText = '✅ تم الاستبدال بنجاح!';
+
             } catch (err) {
                 const fallbackText = prompt("الصق الكود الجديد هنا للاستبدال المباشر:");
                 if (fallbackText !== null) {

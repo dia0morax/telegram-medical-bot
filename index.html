@@ -258,27 +258,29 @@
 
       /* شريط الأوامر السريعة المتجاوب مع مقاس الشاشة */
       .quick-action-bar {
-        position: absolute;
+        position: fixed; /* ثابت بالنسبة للشاشة المرئية دائماً */
         z-index: 999999 !important;
         display: none;
         background: var(--popup-bg);
         border: 1px solid var(--popup-border);
         border-radius: 8px;
-        padding: 3px;
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.75);
+        padding: 4px 6px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.85);
         flex-direction: row;
         align-items: center;
-        gap: 2px;
+        gap: 3px;
         pointer-events: auto;
-        transform: translate(-50%, -100%);
+        transform: translateX(-50%);
         user-select: none;
         direction: ltr;
-        max-width: calc(100vw - 16px);
+        max-width: calc(100vw - 20px);
         overflow-x: auto;
         white-space: nowrap;
         scrollbar-width: none;
         -webkit-overflow-scrolling: touch;
+        transition: top 0.15s ease, left 0.15s ease;
       }
+
 
       .quick-action-bar::-webkit-scrollbar {
         display: none;
@@ -462,8 +464,10 @@
     <script>
       let currentFilename = "index.html";
       let markInstances = [];
+      let lastMatchedRange = null; // حفظ نطاق الجزء المظلل لإعادته بضغطة واحدة
       const quickActionBar = document.getElementById('quick-action-bar');
       const container = document.getElementById('editor-container');
+
 
       const editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
         lineNumbers: true,
@@ -580,30 +584,46 @@
         });
       }
 
-      // تموضع شريط الأوامر عند الإحداثيات المحددة
-      function showActionBarAt(x, y) {
+      // تموضع شريط الأوامر بذكاء داخل نطاق الشاشة المرئي دائماً
+      function showActionBarAt(clientX, clientY) {
         quickActionBar.style.display = 'flex';
 
         const barWidth = quickActionBar.offsetWidth || 280;
+        const barHeight = quickActionBar.offsetHeight || 42;
         const halfBar = barWidth / 2;
 
-        let safeX = x;
+        // 1. ضمان بقاء الشريط أفقياً داخل الشاشة ومحاذاته بالوسط
+        let safeX = clientX;
         if (safeX - halfBar < 10) {
           safeX = halfBar + 10;
         } else if (safeX + halfBar > window.innerWidth - 10) {
           safeX = window.innerWidth - halfBar - 10;
         }
 
-        let safeY = y - 15;
-        if (safeY < 65) {
-          safeY = y + 45;
+        // 2. حساب الحدود العمودية للشاشة (تحت الهيدر وفوق الفوتر)
+        const headerElem = document.querySelector('header');
+        const searchElem = document.querySelector('.search-panel');
+        const minVisibleY = (headerElem ? headerElem.offsetHeight : 50) + (searchElem ? searchElem.offsetHeight : 45) + 8;
+        const maxVisibleY = window.innerHeight - 55;
+
+        // تموضع ذكي: افتراضياً يعلو النص، فإذا كان مخفياً أو قريباً من الأعلى ينزل ليكون مرئياً فوراً
+        let safeY = clientY - barHeight - 12;
+
+        if (safeY < minVisibleY) {
+          safeY = clientY + 30; // إظهاره تحت النص إذا كان النص بأعلى الشاشة
+        }
+
+        // إذا كان التحديد خارج إطار الرؤية كلياً، يثبت الشريط تلقائياً في أعلى منطقة الرؤية المتاحة
+        if (safeY < minVisibleY || safeY > maxVisibleY) {
+          safeY = minVisibleY + 10;
+          safeX = window.innerWidth / 2; // توسيطه تلقائياً في منظورك
         }
 
         quickActionBar.style.left = safeX + 'px';
         quickActionBar.style.top = safeY + 'px';
       }
 
-      // تموضع شريط الأوامر عند تحديد النص
+      // تموضع شريط الأوامر عند تحديد النص بالاعتماد على إحداثيات النافذة (window coords)
       function updateQuickActionBar() {
         if (!editor.somethingSelected()) {
           quickActionBar.style.display = 'none';
@@ -613,14 +633,16 @@
         const from = editor.getCursor("from");
         const to = editor.getCursor("to");
 
-        const startCoords = editor.cursorCoords(from, "page");
-        const endCoords = editor.cursorCoords(to, "page");
+        // استخدام "window" بدلاً من "page" لضمان التتبع المباشر لعين المستخدم
+        const startCoords = editor.cursorCoords(from, "window");
+        const endCoords = editor.cursorCoords(to, "window");
 
         const midX = (startCoords.left + endCoords.right) / 2;
         const topY = Math.min(startCoords.top, endCoords.top);
 
         showActionBarAt(midX, topY);
       }
+
 
 
       editor.on('cursorActivity', () => {
@@ -637,38 +659,58 @@
         }
       });
 
-      // إعادة إظهار الشريط فوراً عند الضغط بنقرة واحدة على أي جزء مضلل بالأصفر
-      editor.on('mousedown', (cm, e) => {
-        const target = e.target || (e.touches && e.touches[0] ? e.touches[0].target : null);
+      // دالة استرجاع شريط الأوامر عند لمس أو النقر على التظليل الأصفر
+      function handleHighlightClick(e) {
+        if (!lastMatchedRange && markInstances.length === 0) return false;
 
-        // التحقق مما إذا كان العنصر المنقور يحمل كلاس التظليل الأصفر
-        if (target && target.classList && target.classList.contains('smart-highlight')) {
-          const clickPos = editor.coordsChar({ left: e.clientX, top: e.clientY }, "page");
+        const clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : null);
+        const clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : null);
+        if (clientX === null || clientY === null) return false;
 
-          // البحث في العلامات المظللة النشطة لمعرفة بدايتها ونهايتها
-          const marks = editor.findMarksAt(clickPos);
-          const highlightMark = marks.find(m => m.className === 'smart-highlight');
+        const target = e.target;
+        const isHighlightElem = target && (target.classList.contains('smart-highlight') || target.closest('.smart-highlight'));
+        const clickPos = editor.coordsChar({ left: clientX, top: clientY }, "page");
 
-          if (highlightMark) {
-            const range = highlightMark.find();
-            if (range) {
-              // إعادة تحديد كامل الجزء المظلل لتعمل كل وظائف الاستبدال والنسخ كالمعتاد
-              setTimeout(() => {
-                editor.setSelection(range.from, range.to);
-                showActionBarAt(e.clientX, e.clientY);
-              }, 20);
-              return;
-            }
-          }
+        let insideRange = false;
+        if (lastMatchedRange) {
+          const afterFrom = (clickPos.line > lastMatchedRange.from.line) || (clickPos.line === lastMatchedRange.from.line && clickPos.ch >= lastMatchedRange.from.ch);
+          const beforeTo = (clickPos.line < lastMatchedRange.to.line) || (clickPos.line === lastMatchedRange.to.line && clickPos.ch <= lastMatchedRange.to.ch);
+          insideRange = afterFrom && beforeTo;
         }
 
-        // السلوك الافتراضي عند النقر في أي مكان عادي آخر
+        if (isHighlightElem || insideRange) {
+          if (e.cancelable) e.preventDefault();
+          editor.focus();
+          if (lastMatchedRange) {
+            editor.setSelection(lastMatchedRange.from, lastMatchedRange.to);
+          }
+          setTimeout(() => {
+            showActionBarAt(clientX, clientY);
+          }, 30);
+          return true;
+        }
+        return false;
+      }
+
+      // دعم النقر بالماوس ولمس الشاشة على الجزء المظلل
+      container.addEventListener('touchstart', (e) => {
+        if (handleHighlightClick(e)) {
+          e.stopPropagation();
+        }
+      }, { passive: false });
+
+      editor.on('mousedown', (cm, e) => {
+        if (handleHighlightClick(e)) {
+          return;
+        }
+
         setTimeout(() => {
           if (!editor.somethingSelected()) {
             quickActionBar.style.display = 'none';
           }
-        }, 10);
+        }, 30);
       });
+
 
 
 
@@ -765,13 +807,15 @@
 
       function downloadFile() {
         const text = editor.getValue();
-        const blob = new Blob([text], { type: 'text/html;charset=utf-8' });
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = "index.html";
+        // حفظ الملف بنفس اسمه الأصلي المفتوح أو الافتراضي
+        link.download = currentFilename || "index.html";
         link.click();
         URL.revokeObjectURL(link.href);
       }
+
 
 
       // خوارزمية البحث والمطابقة
@@ -830,6 +874,11 @@
           document.getElementById('match-score').innerText = `تطابق: ${scorePercent}%`;
           searchInput.value = '';
 
+          lastMatchedRange = {
+            from: { line: startLine, ch: 0 },
+            to: { line: endLine, ch: doc.getLine(endLine).length }
+          };
+
           for (let i = startLine; i <= endLine; i++) {
             const lineLength = doc.getLine(i).length;
             const mark = doc.markText(
@@ -841,12 +890,10 @@
           }
 
           editor.scrollIntoView({ line: startLine, ch: 0 }, 200);
-          editor.setSelection(
-            { line: startLine, ch: 0 },
-            { line: endLine, ch: doc.getLine(endLine).length }
-          );
+          editor.setSelection(lastMatchedRange.from, lastMatchedRange.to);
           setTimeout(updateQuickActionBar, 50);
           editor.focus();
+
         }
 
         // 1. مسار فائق السرعة للمطابقة التامة المباشرة

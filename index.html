@@ -28,14 +28,20 @@
             -webkit-tap-highlight-color: transparent;
         }
 
+        html, body {
+            height: 100%;
+            height: 100dvh;
+            overflow: hidden;
+            overscroll-behavior: none;
+            -webkit-overscroll-behavior: none;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: var(--bg-dark);
             color: var(--text-color);
-            height: 100vh;
             display: flex;
             flex-direction: column;
-            overflow: hidden;
             position: relative;
         }
 
@@ -47,8 +53,36 @@
             justify-content: space-between;
             padding: 6px 10px;
             gap: 6px;
-            z-index: 100;
+            z-index: 1000;
+            flex-shrink: 0;
+            position: sticky;
+            top: 0;
+            user-select: none;
+            -webkit-user-select: none;
         }
+
+        .search-panel {
+            background-color: #2a2a2b;
+            padding: 6px 10px;
+            border-bottom: 2px solid #3c3c3c;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            flex-shrink: 0;
+        }
+
+        footer {
+            background-color: #181818;
+            border-top: 1px solid #2a2a2a;
+            padding: 5px 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.72rem;
+            color: #777;
+            flex-shrink: 0;
+        }
+
 
         .title-area {
             display: flex;
@@ -108,10 +142,21 @@
             fill: currentColor;
         }
 
+        .btn-run {
+            background-color: #1b5e20;
+            border-color: #2e7d32;
+            color: #4caf50;
+        }
+
+        .btn-run:active {
+            background-color: #2e7d32;
+        }
+
         .btn-primary {
             background-color: var(--primary);
             border-color: var(--primary-dark);
         }
+
 
         .search-panel {
             background-color: #2a2a2b;
@@ -312,8 +357,13 @@
             <button class="btn btn-icon-only" onclick="editorRedo()" title="إعادة">
                 <svg viewBox="0 0 24 24"><path d="M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.65 0-8.58 3.03-9.96 7.22L3.9 16c1.05-3.19 4.05-5.5 7.6-5.5 1.95 0 3.73.72 5.12 1.88L13 16h9V7l-3.6 3.6z"/></svg>
             </button>
+            <!-- الزر الجديد بجانب الإعادة -->
+            <button class="btn btn-icon-only btn-run" onclick="runPreview()" title="تجربة وتشغيل الكود في صفحة جديدة">
+                <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </button>
             
             <button class="btn" onclick="document.getElementById('file-input').click()">
+
                 📂 فتح
             </button>
             <input type="file" id="file-input" accept=".txt,.html,.js,.css,.py,.json,.php,.java,.c,.cpp">
@@ -439,7 +489,16 @@
             setTimeout(updateQuickActionBar, 20);
         }
 
+        // دالة تشغيل ومعاينة الكود
+        function runPreview() {
+            const code = editor.getValue();
+            const blob = new Blob([code], { type: 'text/html;charset=utf-8' });
+            const previewUrl = URL.createObjectURL(blob);
+            window.open(previewUrl, '_blank');
+        }
+
         // تموضع شريط الأوامر واحتوائه بالكامل داخل حدود الشاشة
+
         function updateQuickActionBar() {
             if (!editor.somethingSelected()) {
                 quickActionBar.style.display = 'none';
@@ -579,23 +638,25 @@
 
         function downloadFile() {
             const text = editor.getValue();
-            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            const blob = new Blob([text], { type: 'text/html;charset=utf-8' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = currentFilename;
+            link.download = "index.html";
             link.click();
             URL.revokeObjectURL(link.href);
         }
 
+
         // خوارزمية البحث والمطابقة
         function normalizeCode(str) {
             return str
-                .replace(/[\u0600-\u06FF]/g, '')
-                .replace(/\/\/.*$/gm, '')
-                .replace(/\/\*[\s\S]*?\*\//g, '')
-                .replace(/\s+/g, '')
-                .toLowerCase();
+                .replace(/<!--[\s\S]*?-->/g, '')      // حذف تعليقات HTML فقط
+                .replace(/\/\*[\s\S]*?\*\//g, '')     // حذف تعليقات CSS/JS المتعددة
+                .replace(/\/\/.*$/gm, '')             // حذف تعليقات JS الفردية
+                .replace(/\s+/g, '')                  // مسح المسافات
+                .toLowerCase();                       // الحفاظ على النص العربي الأصلي داخل الكود
         }
+
 
         function calculateSimilarity(str1, str2) {
             if (str1 === str2) return 1.0;
